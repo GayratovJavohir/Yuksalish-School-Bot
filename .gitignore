@@ -1,0 +1,53 @@
+# Python related
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Django stuff:
+*.sqlite3
+db.sqlite3
+*.log
+media/
+staticfiles/
+*.pyc
+*.pyo
+*.pyd
+bot/bot_instance.py
+
+# VSCode settings
+.vscode/
+
+# IDEs
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# macOS system files
+.DS_Store
+
+# Node / frontend
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+dist/
+build/
+
+# Environment variables
+.env
+.env.*
+
+# Others
+*.swp
+*.swo
+*.bak
+*.tmp
+*.temp
