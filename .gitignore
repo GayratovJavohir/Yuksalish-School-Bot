@@ -1,53 +1,29 @@
-# Python related
+# idea
+.idea
+idea
+/idea
+
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
-*.pyo
-*.pyd
-.Python
-env/
+
+# Virtual environment
 venv/
-ENV/
-env.bak/
-venv.bak/
+venv
+env/
+.env
 
 # Django stuff:
-*.sqlite3
-db.sqlite3
 *.log
-media/
-staticfiles/
+*.pot
 *.pyc
-*.pyo
-*.pyd
-bot/bot_instance.py
+db.sqlite3
+/staticfiles
+/media
 
 # VSCode settings
 .vscode/
 
-# IDEs
-.idea/
-*.sublime-project
-*.sublime-workspace
-
-# macOS system files
+# MacOS system files
 .DS_Store
-
-# Node / frontend
-node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-dist/
-build/
-
-# Environment variables
-.env
-.env.*
-
-# Others
-*.swp
-*.swo
-*.bak
-*.tmp
-*.temp
