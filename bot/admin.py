@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.utils.crypto import get_random_string
 from django.contrib.auth.hashers import make_password
-from .models import CustomUser
+from .models import CustomUser, TaskSubmission
 import os
 
 def get_unique_username(length=8, allowed_chars=None):
@@ -80,3 +80,10 @@ class CustomUserAdmin(admin.ModelAdmin):
 
         super().save_model(request, obj, form, change)
 
+
+
+@admin.register(TaskSubmission)
+class TaskSubmissionAdmin(admin.ModelAdmin):
+    list_display = ('user', 'task_name', 'submitted_at')
+    list_filter = ('task_name', 'submitted_at')
+    search_fields = ('user__username', 'task_name')
