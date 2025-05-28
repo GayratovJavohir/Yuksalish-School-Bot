@@ -27,3 +27,6 @@ db.sqlite3
 
 # MacOS system files
 .DS_Store
+
+
+static
