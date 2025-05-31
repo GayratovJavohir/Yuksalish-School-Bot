@@ -1,7 +1,7 @@
 import logging
+import time
 import uuid
 from datetime import datetime
-from io import BytesIO
 from aiogram import Router, F, Bot
 from aiogram.filters import Command, CommandStart, or_f
 from aiogram.fsm.context import FSMContext
@@ -21,6 +21,8 @@ from django.core.files.base import ContentFile
 from django.core.cache import cache
 from aiogram.types import BufferedInputFile
 from bot.models import CustomUser, Book, StudentTask, ReadingSubmission
+from pathlib import Path
+import asyncio
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -366,67 +368,101 @@ async def task_selected(callback: CallbackQuery, state: FSMContext):
 
 @router.message(RoleState.waiting_for_task_video, F.video_note)
 async def process_task_video(message: Message, state: FSMContext):
-    if message.forward_from or message.forward_from_chat:
-        await message.answer("Forwarded videos are not allowed. Please record your own video.")
-        return
+    user = None
+    processing_msg = None
+    temp_path = None
 
     try:
-        user = await sync_to_async(CustomUser.objects.get)(telegram_id=message.from_user.id)
-        data = await state.get_data()
-
-        # Get file info first
-        file = await message.bot.get_file(message.video_note.file_id)
-
-        # Check duration (in seconds)
-        if message.video_note.duration > 30:  # Adjust threshold as needed
-            await message.answer("❌ Video note is too long. Please keep it under 30 seconds.")
+        # 1. Basic validations
+        if message.forward_from or message.forward_from_chat:
+            await message.answer("❌ Forwarded videos are not allowed.")
             return
 
-        # Stream the file in chunks
-        filename = f"{uuid.uuid4()}.mp4"
-        chunk_size = 1024 * 1024  # 1MB chunks
+        # 2. Get user and task data
+        user = await sync_to_async(CustomUser.objects.get)(telegram_id=message.from_user.id)
+        data = await state.get_data()
+        task_name = data.get("selected_task", "Unknown Task")
 
-        with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
-            downloaded_bytes = await message.bot.download(file.file_path)
+        # 3. Validate video
+        if message.video_note.duration > 60:
+            await message.answer("⏱️ Video exceeds 1 minute limit")
+            return
 
-            while True:
-                chunk = await downloaded_bytes.read(chunk_size)
-                if not chunk:
-                    break
-                tmp_file.write(chunk)
+        if message.video_note.file_size > 20 * 1024 * 1024:  # 20MB
+            await message.answer("📦 File too large (max 20MB)")
+            return
 
-            tmp_path = tmp_file.name
+        # 4. Start processing
+        processing_msg = await message.answer("🔄 Processing your video...")
 
-        try:
-            # Save the file (sync operation)
-            with open(tmp_path, 'rb') as f:
-                await save_video_task(
-                    student=user,
-                    task_name=data['selected_task'],
-                    video_bytes=f.read(),
-                    filename=filename
-                )
+        # 5. Download file
+        file = await message.bot.get_file(message.video_note.file_id)
+        temp_dir = Path(tempfile.gettempdir()) / "tg_videos"
+        temp_dir.mkdir(exist_ok=True, parents=True)
+        temp_path = temp_dir / f"video_{message.from_user.id}_{int(time.time())}.mp4"
 
-            await message.answer(
-                "✅ Your task submission has been received!",
-                reply_markup=get_main_keyboard(user.role)
+        await message.bot.download_file(file.file_path, destination=str(temp_path))
+
+        # 6. Verify download
+        if not temp_path.exists() or temp_path.stat().st_size == 0:
+            raise ValueError("Empty video file")
+
+        # 7. Save to database
+        with open(temp_path, 'rb') as f:
+            video_bytes = f.read()
+            await save_video_task(
+                student=user,
+                task_name=task_name,
+                video_bytes=video_bytes,
+                filename=temp_path.name
             )
-        finally:
-            # Clean up temp file
+
+        # 8. Success message
+        success_msg = (
+            "✅ Video uploaded successfully!\n\n"
+            f"📝 Task: {task_name}\n"
+            f"⏱ Duration: {message.video_note.duration}s\n"
+            f"📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+        )
+
+        await processing_msg.delete()
+        await message.answer(success_msg, reply_markup=get_main_keyboard(user.role))
+
+    except Exception as e:
+        logger.error(f"Video upload failed: {e}")
+
+        error_msg = (
+            "❌ Upload failed\n\n"
+            "Please:\n"
+            "1. Check your connection\n"
+            "2. Try a shorter video\n"
+            "3. Retry in 5 minutes"
+        )
+
+        if processing_msg:
             try:
-                os.unlink(tmp_path)
+                await processing_msg.delete()
             except:
                 pass
 
-        await state.set_state(RoleState.profile_menu)
+        await message.answer(error_msg, reply_markup=get_main_keyboard(user.role if user else None))
 
-    except Exception as e:
-        logger.error(f"Error processing video: {str(e)}")
-        await message.answer(
-            "❌ Error processing your video. Please try again with a shorter video.",
-            reply_markup=get_main_keyboard(user.role)
-        )
-        await state.set_state(RoleState.profile_menu)
+    finally:
+        if temp_path and temp_path.exists():
+            try:
+                temp_path.unlink()
+            except Exception as e:
+                logger.error(f"Failed to delete temp file: {e}")
+
+
+
+@router.message(RoleState.waiting_for_task_video, F.video)
+async def process_regular_video(message: Message, state: FSMContext):
+    MAX_SIZE_MB = 50
+    if message.video.file_size > MAX_SIZE_MB * 1024 * 1024:
+        await message.answer(f"❌ Video is too large. Please keep it under {MAX_SIZE_MB}MB")
+        return
+
 
 
 @router.message(RoleState.waiting_for_task_video)
@@ -434,20 +470,20 @@ async def invalid_task_video(message: Message):
     await message.answer("Please send a round video message (video note).")
 
 
+
 @sync_to_async
-def save_video_task_chunked(student, task_name, file_path, filename):
-    """Save video task with chunked reading"""
+def save_video_task(student, task_name, video_bytes, filename):
     try:
         submission = StudentTask(student=student, task_name=task_name)
-
-        with open(file_path, 'rb') as f:
-            submission.video_file.save(filename, ContentFile(f.read()))
-
+        submission.video_file.save(filename, ContentFile(video_bytes))
         submission.save()
         return submission
     except Exception as e:
-        logger.error(f"Error saving video task: {e}")
+        logger.error(f"[ERROR] Failed to save video task: {e}")
         raise
+
+
+
 
 
 # --- Reading Handlers ---
