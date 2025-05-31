@@ -1,7 +1,11 @@
 from django.contrib import admin
+from django.urls import reverse
 from django.utils.crypto import get_random_string
 from django.contrib.auth.hashers import make_password
-from .models import CustomUser
+from django.utils.html import format_html
+from django.utils.safestring import mark_safe
+
+from .models import Book, StudentTask, ReadingSubmission, CustomUser
 import os
 
 def get_unique_username(length=8, allowed_chars=None):
@@ -80,3 +84,73 @@ class CustomUserAdmin(admin.ModelAdmin):
 
         super().save_model(request, obj, form, change)
 
+    def get_fields(self, request, obj=None):
+        fields = super().get_fields(request, obj)
+        if not obj:
+            fields = tuple(f for f in fields if f != "username")
+        return fields
+
+
+@admin.register(Book)
+class BookAdmin(admin.ModelAdmin):
+    list_display = ('title', 'month', 'uploaded_by', 'upload_date', 'book_link')
+    list_filter = ('month', 'uploaded_by')
+    search_fields = ('title', 'month')
+    date_hierarchy = 'upload_date'
+    raw_id_fields = ('uploaded_by',)
+
+    def book_link(self, obj):
+        if obj.file:
+            url = reverse('view_book_file', args=[obj.id])
+            return mark_safe(f'<a href="{url}" target="_blank">View File</a>')
+        return "-"
+
+    book_link.short_description = "File"
+
+    def save_model(self, request, obj, form, change):
+        if not change:
+            obj.uploaded_by = request.user
+        super().save_model(request, obj, form, change)
+
+
+@admin.register(StudentTask)
+class StudentTaskAdmin(admin.ModelAdmin):
+    list_display = ('student', 'task_name', 'submission_date', 'video_link')
+
+    def video_link(self, obj):
+        if obj.video_file:
+            url = reverse('view_task_video', args=[obj.id])
+            return mark_safe(f'<a href="{url}" target="_blank">View Video</a>')
+        return "-"
+
+    video_link.short_description = "Video"
+
+
+
+from django.contrib import admin
+from .models import ReadingSubmission
+from django.utils.safestring import mark_safe
+from django.urls import reverse
+
+@admin.register(ReadingSubmission)
+class ReadingSubmissionAdmin(admin.ModelAdmin):
+    list_display = ('student', 'book', 'month', 'submission_date', 'voice_preview')
+    readonly_fields = ('voice_preview',)
+    search_fields = ('student__username', 'book__title')
+    list_filter = ('month', 'submission_date')
+
+    def voice_preview(self, obj):
+        if obj.voice_file:
+            return mark_safe(f'''
+                <audio controls>
+                    <source src="{obj.voice_file.url}" type="audio/ogg">
+                    Your browser does not support the audio element.
+                </audio>
+                <a href="{obj.voice_file.url}" download>Download</a>
+            ''')
+        elif obj.voice_message_id:
+            return mark_safe(f'''
+                <span>Telegram Voice Message ID: {obj.voice_message_id}</span>
+            ''')
+        return "No voice file"
+    voice_preview.short_description = "Voice Preview"
