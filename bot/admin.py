@@ -5,7 +5,7 @@ from django.contrib.auth.hashers import make_password
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 
-from .models import Book, StudentTask, ReadingSubmission, CustomUser
+from .models import Book, StudentTask, ReadingSubmission, CustomUser, Branch, StudentClass
 import os
 
 def get_unique_username(length=8, allowed_chars=None):
@@ -89,6 +89,17 @@ class CustomUserAdmin(admin.ModelAdmin):
         if not obj:
             fields = tuple(f for f in fields if f != "username")
         return fields
+
+
+@admin.register(Branch)
+class BranchAdmin(admin.ModelAdmin):
+    list_display = ("name",)
+    search_fields = ("name",)
+
+@admin.register(StudentClass)
+class StudentClassAdmin(admin.ModelAdmin):
+    list_display = ("name",)
+    search_fields = ("name",)
 
 
 @admin.register(Book)

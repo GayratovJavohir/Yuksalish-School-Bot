@@ -22,12 +22,25 @@ class CustomUser(AbstractUser):
     first_name = models.CharField(max_length=30, blank=False)
     last_name = models.CharField(max_length=30, blank=False)
     role = models.CharField(max_length=20, choices=ROLE_CHOICES)
-    branch = models.CharField(max_length=100, blank=True, null=True)
-    student_class = models.CharField(max_length=100, blank=True, null=True)
+    branch = models.ForeignKey("Branch", on_delete=models.SET_NULL, null=True, blank=True)
+    student_class = models.ForeignKey("StudentClass", on_delete=models.SET_NULL, null=True, blank=True)
     telegram_id = models.BigIntegerField(blank=True, null=True, unique=True)
 
     def __str__(self):
         return self.username
+
+class Branch(models.Model):
+    name = models.CharField(max_length=255)
+    def __str__(self):
+        return self.name
+
+
+class StudentClass(models.Model):
+    branch = models.ForeignKey(Branch, on_delete=models.CASCADE)
+    name = models.CharField(max_length=50)
+    def __str__(self):
+        return self.name
+
 
 class Book(models.Model):
     title = models.CharField(max_length=200)

@@ -24,6 +24,8 @@ from bot.models import CustomUser, Book, StudentTask, ReadingSubmission
 from pathlib import Path
 import asyncio
 
+from bot.utils import get_books_for_month_and_class
+
 router = Router()
 logger = logging.getLogger(__name__)
 
@@ -100,7 +102,9 @@ profile_keyboard = ReplyKeyboardMarkup(
 
 # --- Helper Functions ---
 async def get_user(telegram_id):
-    return await sync_to_async(CustomUser.objects.filter(telegram_id=telegram_id).first)()
+    return await sync_to_async(
+        lambda: CustomUser.objects.select_related("branch", "student_class").filter(telegram_id=telegram_id).first()
+    )()
 
 
 async def download_file(bot, file_id):
@@ -222,7 +226,7 @@ async def profile_menu(message: Message, state: FSMContext):
             f"🆔 Username: {user.username}\n"
             f"📛 Ismi: {user.first_name or '---'}\n"
             f"👪 Familiyasi: {user.last_name or '---'}\n"
-            f"🏫 Filiali: {user.branch or '---'}\n"
+            f"🏫 Filiali: {user.branch.name if user.branch else '---'}\n"
             f"📚 Sinfi: {user.student_class or '---'}"
         )
 
@@ -286,14 +290,17 @@ async def profile_menu(message: Message, state: FSMContext):
         await message.answer("📖 Enter the book title:", reply_markup=ReplyKeyboardRemove())
         await state.set_state(RoleState.uploading_book_title)
 
+
     elif message.text == "📋 List Books" and user.role == "coordinator":
-        books = await sync_to_async(list)(Book.objects.all().order_by('month', 'title'))
+        books = await sync_to_async(list)(
+            Book.objects.filter(uploaded_by=user).order_by('month', 'title')
+        )
 
         if not books:
-            await message.answer("No books available yet.")
+            await message.answer("📭 Siz hali hech qanday kitob qo‘shmagansiz.")
             return
 
-        response = ["📚 Available Books:"]
+        response = ["📚 Qo'shgan kitoblaringiz:"]
         current_month = None
 
         for book in books:
@@ -491,9 +498,15 @@ def save_video_task(student, task_name, video_bytes, filename):
 async def month_selected(callback: CallbackQuery, state: FSMContext):
     try:
         month = callback.data.split('_')[1]
-        await state.update_data(selected_month=month)
+        user = await get_user(callback.from_user.id)
 
-        books = await get_books_for_month(month)
+        if not user.student_class:
+            await callback.message.answer("❌ Sizning sinfingiz aniqlanmadi.")
+            await state.set_state(RoleState.profile_menu)
+            return
+
+        books = await get_books_for_month_and_class(month, user.student_class.id)
+
         if not books:
             await callback.message.answer(f"❌ {month} oyi uchun hozircha kitoblar mavjud emas.")
             await state.set_state(RoleState.profile_menu)
@@ -506,7 +519,7 @@ async def month_selected(callback: CallbackQuery, state: FSMContext):
 
         markup = InlineKeyboardMarkup(inline_keyboard=buttons)
         await callback.message.answer(
-            f"📅 {month} oyi uchun kitoblar:",
+            f"📅 {month} oyi uchun {user.student_class} sinfi kitoblari:",
             reply_markup=markup
         )
         await state.set_state(RoleState.choosing_book)
