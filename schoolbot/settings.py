@@ -1,8 +1,12 @@
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = 'django-insecure-8l3i)6d_8ukidrb(1t89oipmx^cfx%3)vbv%9l&p=(lu1&!u*o'
+
+load_dotenv(BASE_DIR / '.env')
 
 DEBUG = True
 
@@ -17,6 +21,8 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
 
     'bot',
+    'django_celery_beat',
+
 ]
 
 MIDDLEWARE = [
@@ -30,6 +36,8 @@ MIDDLEWARE = [
 ]
 
 ROOT_URLCONF = 'schoolbot.urls'
+
+
 
 TEMPLATES = [
     {
@@ -74,8 +82,12 @@ AUTH_PASSWORD_VALIDATORS = [
 LANGUAGE_CODE = 'en'
 
 TIME_ZONE = 'Asia/Tashkent'
-
-USE_I18N = True
+CELERY_BROKER_URL = 'redis://localhost:6379/0'
+CELERY_RESULT_BACKEND = 'redis://localhost:6379/0'
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_TIMEZONE = 'Asia/Tashkent'
+USE_DEPRECATED_PYTZ = False  # Add this line to fix the timezone_field errorUSE_I18N = True
 
 USE_TZ = True
 
