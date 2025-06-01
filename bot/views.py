@@ -59,3 +59,10 @@ def view_book_file(request, pk):
         request,
         content_type=content_type
     )
+
+
+from django.http import JsonResponse
+from .tasks import send_daily_reminders
+def test_task_view(request):
+    send_daily_reminders.delay()
+    return JsonResponse({"message": "Celery task yuborildi!"})
