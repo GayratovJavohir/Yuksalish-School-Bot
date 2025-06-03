@@ -145,10 +145,14 @@ from django.urls import reverse
 
 @admin.register(ReadingSubmission)
 class ReadingSubmissionAdmin(admin.ModelAdmin):
-    list_display = ('student', 'book', 'month', 'submission_date', 'voice_preview')
+    list_display = ('student', 'get_book_title', 'month', 'submission_date', 'voice_preview')
     readonly_fields = ('voice_preview',)
-    search_fields = ('student__username', 'book__title')
+    search_fields = ('student__username', 'book__title', 'custom_book__title')
     list_filter = ('month', 'submission_date')
+
+    def get_book_title(self, obj):
+        return obj.book.title if obj.book else obj.custom_book.title
+    get_book_title.short_description = "Book Title"
 
     def voice_preview(self, obj):
         if obj.voice_file:

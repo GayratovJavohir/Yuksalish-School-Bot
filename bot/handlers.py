@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime
 from aiogram import Router, F, Bot
 from aiogram.filters import Command, CommandStart, or_f
+from aiogram.fsm import state
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.types import (
@@ -20,9 +21,11 @@ from django.contrib.auth import authenticate
 from django.core.files.base import ContentFile
 from django.core.cache import cache
 from aiogram.types import BufferedInputFile
-from bot.models import CustomUser, Book, StudentTask, ReadingSubmission
+from bot.models import CustomUser, Book, StudentTask, ReadingSubmission, CustomBook
 from pathlib import Path
-import asyncio
+import aiohttp
+import tempfile
+import os
 
 from bot.utils import get_books_for_month_and_class
 
@@ -45,7 +48,8 @@ class RoleState(StatesGroup):
     uploading_book_title = State()
     uploading_book_month = State()
     uploading_book_file = State()
-
+    waiting_for_custom_book_name = State()
+    waiting_for_page_count = State()
 
 # --- Keyboards ---
 def get_main_keyboard(user_role):
@@ -102,9 +106,7 @@ profile_keyboard = ReplyKeyboardMarkup(
 
 # --- Helper Functions ---
 async def get_user(telegram_id):
-    return await sync_to_async(
-        lambda: CustomUser.objects.select_related("branch", "student_class").filter(telegram_id=telegram_id).first()
-    )()
+    return await sync_to_async(CustomUser.objects.filter(telegram_id=telegram_id).first)()
 
 
 async def download_file(bot, file_id):
@@ -226,7 +228,7 @@ async def profile_menu(message: Message, state: FSMContext):
             f"🆔 Username: {user.username}\n"
             f"📛 Ismi: {user.first_name or '---'}\n"
             f"👪 Familiyasi: {user.last_name or '---'}\n"
-            f"🏫 Filiali: {user.branch.name if user.branch else '---'}\n"
+            f"🏫 Filiali: {user.branch or '---'}\n"
             f"📚 Sinfi: {user.student_class or '---'}"
         )
 
@@ -290,17 +292,14 @@ async def profile_menu(message: Message, state: FSMContext):
         await message.answer("📖 Enter the book title:", reply_markup=ReplyKeyboardRemove())
         await state.set_state(RoleState.uploading_book_title)
 
-
     elif message.text == "📋 List Books" and user.role == "coordinator":
-        books = await sync_to_async(list)(
-            Book.objects.filter(uploaded_by=user).order_by('month', 'title')
-        )
+        books = await sync_to_async(list)(Book.objects.all().order_by('month', 'title'))
 
         if not books:
-            await message.answer("📭 Siz hali hech qanday kitob qo‘shmagansiz.")
+            await message.answer("No books available yet.")
             return
 
-        response = ["📚 Qo'shgan kitoblaringiz:"]
+        response = ["📚 Available Books:"]
         current_month = None
 
         for book in books:
@@ -490,23 +489,14 @@ def save_video_task(student, task_name, video_bytes, filename):
         raise
 
 
-
-
-
 # --- Reading Handlers ---
 @router.callback_query(RoleState.choosing_month, F.data.startswith("month_"))
 async def month_selected(callback: CallbackQuery, state: FSMContext):
     try:
         month = callback.data.split('_')[1]
-        user = await get_user(callback.from_user.id)
+        await state.update_data(selected_month=month)
 
-        if not user.student_class:
-            await callback.message.answer("❌ Sizning sinfingiz aniqlanmadi.")
-            await state.set_state(RoleState.profile_menu)
-            return
-
-        books = await get_books_for_month_and_class(month, user.student_class.id)
-
+        books = await get_books_for_month(month)
         if not books:
             await callback.message.answer(f"❌ {month} oyi uchun hozircha kitoblar mavjud emas.")
             await state.set_state(RoleState.profile_menu)
@@ -517,11 +507,17 @@ async def month_selected(callback: CallbackQuery, state: FSMContext):
             for book in books
         ]
 
+        # Add "Boshqa" button
+        buttons.append([InlineKeyboardButton(text="Boshqa kitob", callback_data="other_book")])
+
         markup = InlineKeyboardMarkup(inline_keyboard=buttons)
-        await callback.message.answer(
-            f"📅 {month} oyi uchun {user.student_class} sinfi kitoblari:",
-            reply_markup=markup
-        )
+
+        if not books:
+            text = f"📅 {month} oyi uchun kitoblar mavjud emas. Boshqa kitob tanlang:"
+        else:
+            text = f"📅 {month} oyi uchun kitoblar:"
+
+        await callback.message.answer(text, reply_markup=markup)
         await state.set_state(RoleState.choosing_book)
         await callback.answer()
 
@@ -530,12 +526,49 @@ async def month_selected(callback: CallbackQuery, state: FSMContext):
         await state.set_state(RoleState.profile_menu)
         await callback.answer()
 
+@router.callback_query(RoleState.choosing_book, F.data == "other_book")
+async def other_book_selected(callback: CallbackQuery, state: FSMContext):
+    await callback.message.answer(
+        "📖 Iltimos, o'qigan kitobingiz nomini yuboring:",
+        reply_markup=ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="Bekor qilish")]],
+            resize_keyboard=True
+        )
+    )
+    await state.set_state(RoleState.waiting_for_custom_book_name)
+    await callback.answer()
 
-from aiogram.types import InputFile
-from urllib.parse import urljoin
-import aiohttp
-import tempfile
-import os
+
+@router.message(RoleState.waiting_for_custom_book_name, F.text)
+async def process_custom_book_name(message: Message, state: FSMContext):
+    if message.text == "Bekor qilish":
+        await message.answer("Bekor qilindi.", reply_markup=get_main_keyboard('student'))
+        await state.set_state(RoleState.profile_menu)
+        return
+
+    data = await state.get_data()
+    user = await get_user(message.from_user.id)
+
+    # Save custom book to database
+    custom_book = await sync_to_async(CustomBook.objects.create)(
+        student=user,
+        month=data['selected_month'],
+        title=message.text
+    )
+
+    await state.update_data(
+        selected_book_title=message.text,
+        custom_book_id=custom_book.id  # Make sure to store the ID
+    )
+
+    await message.answer(
+        "🎤 Kitobni o'qiganligingizni tasdiqlash uchun ovozli xabar yuboring",
+        reply_markup=ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="Bekor qilish")]],
+            resize_keyboard=True
+        )
+    )
+    await state.set_state(RoleState.waiting_for_voice_message)
 
 
 async def download_file_from_url(url, filename=None):
@@ -616,47 +649,108 @@ async def book_selected(callback: CallbackQuery, state: FSMContext, bot: Bot):
 @router.message(RoleState.waiting_for_voice_message, F.voice)
 async def process_voice_message(message: Message, state: FSMContext, bot: Bot):
     if message.forward_from or message.forward_from_chat:
-        await message.answer("Forwarded voice messages are not allowed. Please record your own.")
+        await message.answer("⛔️ Iltimos, faqat o'zingiz yozgan ovozli xabarni yuboring.")
         return
 
     try:
         data = await state.get_data()
         user = await get_user(message.from_user.id)
-        book = await sync_to_async(Book.objects.get)(id=data['selected_book_id'])
 
-        # Download the voice file
+        # Check if a book or custom book was selected
+        selected_month = data.get("selected_month")
+        selected_book_id = data.get("selected_book_id")
+        custom_book_id = data.get("custom_book_id")
+
+        if not selected_book_id and not custom_book_id:
+            await message.answer("⚠️ Xatolik: Kitob tanlanmagan.")
+            return
+
+        # Prepare submission with related object instead of ID
+        submission_data = {
+            "student": user,
+            "month": selected_month,
+            "voice_message_id": message.voice.file_id,
+        }
+
+        if selected_book_id:
+            book = await sync_to_async(Book.objects.get)(id=selected_book_id)
+            submission_data["book"] = book
+        else:
+            custom_book = await sync_to_async(CustomBook.objects.get)(id=custom_book_id)
+            submission_data["custom_book"] = custom_book
+
+        # Create the submission (without voice_file yet)
+        submission = await sync_to_async(ReadingSubmission.objects.create)(**submission_data)
+
+        # Download and save the voice file
         file_bytes = await download_file(bot, message.voice.file_id)
-        filename = f"voice_{uuid.uuid4()}.ogg"
-
-        # Create the submission
-        submission = ReadingSubmission(
-            student=user,
-            month=data['selected_month'],
-            book=book,
-            voice_message_id=message.voice.file_id
-        )
-
-        # Save voice file (async-safe)
+        filename = f"voice_{submission.id}.ogg"
         await sync_to_async(submission.voice_file.save)(filename, ContentFile(file_bytes.read()))
 
-        # Save submission itself (async-safe)
+        # Final save
+        await sync_to_async(submission.save)()
+
+        # Ask for page count
+        await message.answer(
+            "📖 Kitobdan necha bet o'qidingiz? Faqat raqamda yuboring (masalan: 45)",
+            reply_markup=ReplyKeyboardMarkup(
+                keyboard=[[KeyboardButton(text="Bekor qilish")]],
+                resize_keyboard=True
+            )
+        )
+        await state.update_data(submission_id=submission.id)
+        await state.set_state(RoleState.waiting_for_page_count)
+
+    except Exception as e:
+        logger.error(f"Error saving voice submission: {str(e)}", exc_info=True)
+
+        # Clean up failed submission if created
+        if 'submission' in locals() and hasattr(submission, 'pk') and submission.pk:
+            await sync_to_async(submission.delete)()
+
+        await message.answer(
+            "❌ Ovozli xabarni saqlashda xatolik yuz berdi. Iltimos, qayta urinib ko'ring.",
+            reply_markup=get_main_keyboard(user.role if user else None)
+        )
+        await state.set_state(RoleState.profile_menu)
+
+
+
+@router.message(RoleState.waiting_for_page_count, F.text.regexp(r'^\d+$'))
+async def process_page_count(message: Message, state: FSMContext):
+    try:
+        page_count = int(message.text)
+        data = await state.get_data()
+
+        # Update the submission with page count
+        submission = await sync_to_async(ReadingSubmission.objects.get)(id=data['submission_id'])
+        submission.page_count = page_count
         await sync_to_async(submission.save)()
 
         await message.answer(
-            "✅ Sizning kitob o'qishingiz qabul qilindi!",
-            reply_markup=get_main_keyboard(user.role)
+            f"✅ Sizning {page_count} bet kitob o'qishingiz qabul qilindi!",
+            reply_markup=get_main_keyboard('student')
         )
         await state.set_state(RoleState.profile_menu)
 
     except Exception as e:
-        logger.error(f"Error saving voice submission: {str(e)}")
+        logger.error(f"Error saving page count: {str(e)}")
         await message.answer(
-            "❌ Ovozli xabar saqlanmadi. Iltimos, qayta urunib ko'ring.",
-            reply_markup=get_main_keyboard(user.role)
+            "❌ Xatolik yuz berdi. Iltimos, faqat raqam yuboring (masalan: 45).",
+            reply_markup=ReplyKeyboardMarkup(
+                keyboard=[[KeyboardButton(text="Bekor qilish")]],
+                resize_keyboard=True
+            )
         )
+
+
+@router.message(RoleState.waiting_for_page_count)
+async def invalid_page_count(message: Message):
+    if message.text == "Bekor qilish":
+        await message.answer("Bekor qilindi.", reply_markup=get_main_keyboard('student'))
         await state.set_state(RoleState.profile_menu)
-
-
+    else:
+        await message.answer("Iltimos, faqat raqam yuboring (masalan: 45)")
 
 @router.message(RoleState.waiting_for_voice_message)
 async def invalid_voice_message(message: Message):

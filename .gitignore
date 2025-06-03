@@ -1,33 +1,65 @@
-# idea
-.idea
-idea
-/idea
-
-# Byte-compiled / optimized / DLL files
+### Python ###
+# Byte-compiled files
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
+.Python
 
 # Virtual environment
 venv/
-venv
+ENV/
 env/
-.env
+.env/
+.venv/
 
-# Django stuff:
-*.log
-*.pot
-*.pyc
-db.sqlite3
-/staticfiles
-/media
-
-# VSCode settings
+# IDE specific files
+.idea/
 .vscode/
+*.swp
+*.swo
+*.sublime-workspace
 
-# MacOS system files
+### Django ###
+# Database
+*.sqlite3
+*.db
+
+# Media and static files
+/media/
+/staticfiles/
+/static/
+
+# Logs and local settings
+*.log
+logs/
+local_settings.py
+db.sqlite3
+celerybeat-schedule
+
+# Environment files
+.env
+.env.local
+.env.*.local
+.env.production
+.env.development
+
+# Secrets
+secrets.json
+credentials.json
+
+### System ###
+# MacOS
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
 
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
 
 static
 
