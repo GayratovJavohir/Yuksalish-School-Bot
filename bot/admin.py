@@ -126,22 +126,24 @@ class StudentTaskAdmin(admin.ModelAdmin):
     video_link.short_description = "Video"
 
 
-
-from django.contrib import admin
-from .models import ReadingSubmission
-from django.utils.safestring import mark_safe
-from django.urls import reverse
-
 @admin.register(ReadingSubmission)
 class ReadingSubmissionAdmin(admin.ModelAdmin):
-    list_display = ('student', 'get_book_title', 'month', 'submission_date', 'voice_preview')
+    list_display = ('student', 'get_book_title', 'get_month', 'submission_date', 'voice_preview')
     readonly_fields = ('voice_preview',)
-    search_fields = ('student__username', 'book__title', 'custom_book__title')
-    list_filter = ('month', 'submission_date')
+    search_fields = ('student__username', 'book__title', 'custom_book__name') # Corrected custom_book field to 'name'
+    list_filter = ('book__month', 'submission_date') # Changed 'month' to 'book__month'
 
     def get_book_title(self, obj):
-        return obj.book.title if obj.book else obj.custom_book.title
+        # Corrected for custom_book to use 'name' instead of 'title'
+        return obj.book.title if obj.book else obj.custom_book.name if obj.custom_book else "N/A"
     get_book_title.short_description = "Book Title"
+
+    def get_month(self, obj):
+        """Retrieves the month from the associated Book object."""
+        if obj.book:
+            return obj.book.month
+        return "N/A" # Or None, or an empty string, depending on desired display
+    get_month.short_description = "Month"
 
     def voice_preview(self, obj):
         if obj.voice_file:

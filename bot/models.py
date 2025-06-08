@@ -35,78 +35,70 @@ class CustomUser(AbstractUser):
     role = models.CharField(max_length=20, choices=ROLE_CHOICES)
     branch = models.CharField(max_length=100, blank=True, null=True)
     student_class = models.CharField(max_length=100, blank=True, null=True)
-    telegram_id = models.BigIntegerField(blank=True, null=True, unique=True)
+    telegram_id = models.CharField(max_length=50, unique=True, null=True, blank=True)
 
     def __str__(self):
         return self.username
 
-# ========== Book Models ==========
-
+# ========== Book Model ==========
 class Book(models.Model):
-    MONTH_CHOICES = [(month, month) for month in [
-        'January', 'February', 'March', 'April', 'May', 'June',
-        'July', 'August', 'September', 'October', 'November', 'December'
-    ]]
-    title = models.CharField(max_length=200)
-    month = models.CharField(max_length=20, choices=MONTH_CHOICES)
-    file = models.FileField(
-        upload_to=book_upload_path,
-        validators=[FileExtensionValidator(allowed_extensions=['pdf', 'doc', 'docx', 'txt'])]
-    )
-    uploaded_by = models.ForeignKey(CustomUser, on_delete=models.CASCADE)
+    title = models.CharField(max_length=255)
+    month = models.CharField(max_length=20)
+    file = models.FileField(upload_to=book_upload_path, validators=[FileExtensionValidator(allowed_extensions=['pdf', 'doc', 'docx', 'txt'])])
+    uploaded_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, limit_choices_to={'role': 'coordinator'})
     upload_date = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        ordering = ['month', 'title']
+        ordering = ['-upload_date']
+        unique_together = ('title', 'month')
 
     def __str__(self):
         return f"{self.title} ({self.month})"
 
-    def delete(self, *args, **kwargs):
-        if self.file and default_storage.exists(self.file.name):
-            default_storage.delete(self.file.name)
-        super().delete(*args, **kwargs)
+    @property
+    def file_exists(self):
+        if self.file:
+            return default_storage.exists(self.file.name)
+        return False
 
-class CustomBook(models.Model):
-    student = models.ForeignKey(CustomUser, on_delete=models.CASCADE)
-    month = models.CharField(max_length=20)
-    title = models.CharField(max_length=200)
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        ordering = ['-created_at']
-
-    def __str__(self):
-        return f"{self.title} ({self.month}) by {self.student.username}"
-
-# ========== Student Tasks ==========
-
+# ========== Student Task Model ==========
 class StudentTask(models.Model):
-    student = models.ForeignKey(CustomUser, on_delete=models.CASCADE)
-    task_name = models.CharField(max_length=100)
-    video_file = models.FileField(upload_to=task_video_upload_path)
+    student = models.ForeignKey(CustomUser, on_delete=models.CASCADE, limit_choices_to={'role': 'student'})
+    task_name = models.CharField(max_length=255)
+    video_file = models.FileField(upload_to=task_video_upload_path, null=True, blank=True, validators=[FileExtensionValidator(allowed_extensions=['mp4', 'mov', 'avi', 'mkv'])])
     submission_date = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        default_permissions = ('add', 'change', 'delete', 'view')
         ordering = ['-submission_date']
+        unique_together = ('student', 'task_name')
 
-    def delete(self, *args, **kwargs):
-        if self.video_file and default_storage.exists(self.video_file.name):
-            default_storage.delete(self.video_file.name)
-        super().delete(*args, **kwargs)
+    def __str__(self):
+        return f"{self.student.username} - {self.task_name}"
 
-# ========== Reading Submissions ==========
 
-class ReadingSubmission(models.Model):
-    student = models.ForeignKey(CustomUser, on_delete=models.CASCADE)
+# ========== Custom Book Model ==========
+class CustomBook(models.Model):
+    name = models.CharField(max_length=255)
+    created_by = models.ForeignKey(CustomUser, on_delete=models.CASCADE, limit_choices_to={'role': 'student'})
     month = models.CharField(max_length=20)
+    creation_date = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-creation_date']
+        unique_together = ('name', 'created_by', 'month')
+
+    def __str__(self):
+        return self.name
+# ========== Reading Submission Model ==========
+class ReadingSubmission(models.Model):
+    student = models.ForeignKey(CustomUser, on_delete=models.CASCADE, limit_choices_to={'role': 'student'})
     book = models.ForeignKey(Book, on_delete=models.CASCADE, null=True, blank=True)
     custom_book = models.ForeignKey(CustomBook, on_delete=models.CASCADE, null=True, blank=True)
     voice_file = models.FileField(upload_to=reading_voice_upload_path, null=True, blank=True)
     voice_message_id = models.CharField(max_length=255, blank=True)
     page_count = models.PositiveIntegerField(null=True, blank=True)
     submission_date = models.DateTimeField(auto_now_add=True)
+    month = models.CharField(max_length=50, blank=True, null=True)
 
     class Meta:
         ordering = ['-submission_date']
@@ -134,5 +126,5 @@ class ReadingSubmission(models.Model):
         super().save(*args, **kwargs)
 
     def __str__(self):
-        book_title = self.book.title if self.book else self.custom_book.title
-        return f"{self.student.username} - {book_title} ({self.page_count} pages)"
+        book_title = self.book.title if self.book else self.custom_book.name
+        return f"{self.student.username} - {book_title} ({self.month})"
